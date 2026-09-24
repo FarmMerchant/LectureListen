@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LectureListen</title>
+  <meta name="description" content="Record lectures from your microphone, transcribe them live, and turn them into clean study notes." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234f46e5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='2' width='6' height='12' rx='3'/%3E%3Cpath d='M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="styles.css" />
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/></svg>
+      <span>LectureListen</span>
+    </div>
+    <div class="topbar-actions">
+      <button id="newBtn" class="btn btn-ghost" type="button" hidden>New lecture</button>
+      <a href="#library" class="btn btn-ghost">Library <span id="libraryCount" class="count">0</span></a>
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="banner" class="banner" role="status" hidden></div>
+    <script>
+      if (location.protocol === 'file:') {
+        const b = document.getElementById('banner');
+        b.hidden = false;
+        b.textContent = 'LectureListen must be served from a local web server, not opened as a file. Run serve.ps1 in this folder (or any static server) and open http://localhost:8000.';
+      }
+    </script>
+
+    <div class="workspace">
+      <section class="card recorder" aria-labelledby="recorderHeading">
+        <h2 id="recorderHeading" class="visually-hidden">Recorder</h2>
+
+        <label class="field">
+          <span class="field-label">Lecture title</span>
+          <input id="title" type="text" autocomplete="off" />
+        </label>
+
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">Microphone</span>
+            <select id="micSelect"><option value="">Default microphone</option></select>
+          </label>
+          <label class="field">
+            <span class="field-label">Language</span>
+            <select id="langSelect"></select>
+          </label>
+        </div>
+
+        <label class="field">
+          <span class="field-label">Transcription</span>
+          <select id="engineSelect"></select>
+          <span id="engineHint" class="field-hint" aria-live="polite"></span>
+        </label>
+
+        <div class="meter">
+          <canvas id="viz" aria-hidden="true"></canvas>
+          <div class="meter-overlay">
+            <span id="statusPill" class="pill" data-status="idle">Ready</span>
+            <span id="timer" class="timer">00:00:00</span>
+          </div>
+        </div>
+
+        <div class="controls">
+          <button id="recordBtn" class="btn btn-record" type="button">
+            <span class="dot" aria-hidden="true"></span><span class="label">Start recording</span>
+          </button>
+          <button id="pauseBtn" class="btn btn-secondary" type="button" disabled>Pause</button>
+          <button id="stopBtn" class="btn btn-secondary" type="button" disabled>Stop</button>
+        </div>
+
+        <p id="notice" class="notice" role="alert" hidden></p>
+
+        <div id="playback" class="playback" hidden>
+          <audio id="player" controls preload="metadata"></audio>
+          <div class="playback-actions">
+            <button id="downloadAudioBtn" class="btn btn-secondary" type="button">Download audio</button>
+          </div>
+        </div>
+
+        <p class="hint">Sit near the speaker and keep this tab open. Your screen stays awake while recording.</p>
+      </section>
+
+      <section class="card transcript-card" aria-labelledby="transcriptHeading">
+        <div class="card-head">
+          <div>
+            <h2 id="transcriptHeading">Transcript</h2>
+            <p id="wordCount" class="muted">0 words</p>
+          </div>
+          <div class="card-actions">
+            <button id="chatterToggle" class="btn btn-ghost" type="button" hidden>Show removed</button>
+            <button id="copyBtn" class="btn btn-ghost" type="button" disabled>Copy</button>
+            <button id="downloadTxtBtn" class="btn btn-ghost" type="button" disabled>Download .txt</button>
+          </div>
+        </div>
+        <div id="transcript" class="transcript" aria-live="polite">
+          <div id="emptyState" class="empty">
+            <p>Your transcript will appear here as the lecture is spoken.</p>
+            <p class="muted">Press <strong>Start recording</strong> and allow microphone access.</p>
+          </div>
+          <div id="segments"></div>
+          <p id="interim" class="interim"></p>
+        </div>
+      </section>
+    </div>
+
+    <section class="card notes-card" aria-labelledby="notesHeading">
+      <div class="card-head">
+        <div>
+          <h2 id="notesHeading">Notes</h2>
+          <p id="notesStatus" class="muted" aria-live="polite"></p>
+        </div>
+        <div class="card-actions">
+          <button id="generateBtn" class="btn btn-primary" type="button" disabled>Generate notes</button>
+          <button id="copyNotesBtn" class="btn btn-ghost" type="button" disabled>Copy</button>
+          <button id="downloadNotesBtn" class="btn btn-ghost" type="button" disabled>Download .md</button>
+        </div>
+      </div>
+
+      <details id="settings" class="settings">
+        <summary>Claude settings</summary>
+        <div class="settings-body">
+          <label class="field">
+            <span class="field-label">Anthropic API key</span>
+            <span class="key-row">
+              <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" />
+              <button id="saveKeyBtn" class="btn btn-secondary" type="button">Save</button>
+              <button id="clearKeyBtn" class="btn btn-ghost" type="button">Remove</button>
+            </span>
+          </label>
+          <p class="muted">Stored in this browser only and sent directly to api.anthropic.com. Create a key at console.anthropic.com.</p>
+          <label class="check">
+            <input id="autoNotes" type="checkbox" checked />
+            <span>Generate notes automatically when a recording stops</span>
+          </label>
+        </div>
+      </details>
+
+      <div id="notesBody" class="notes-body"></div>
+    </section>
+
+    <section id="library" class="library" aria-labelledby="libraryHeading">
+      <h2 id="libraryHeading">Saved lectures</h2>
+      <p class="muted">Recordings, transcripts and notes are saved in this browser on this device.</p>
+      <ul id="libraryList" class="library-list"></ul>
+      <p id="libraryEmpty" class="muted empty-library">No saved lectures yet.</p>
+    </section>
+  </main>
+</body>
+</html>
