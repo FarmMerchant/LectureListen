@@ -186,8 +186,21 @@
     </section>
 
     <section id="library" class="library" aria-labelledby="libraryHeading">
-      <h2 id="libraryHeading">Saved lectures</h2>
-      <p class="muted">Recordings, transcripts and notes are saved in this browser on this device.</p>
+      <div class="library-head">
+        <div>
+          <h2 id="libraryHeading">Saved lectures</h2>
+          <p class="muted">Recordings, transcripts and notes are saved in this browser on this device.</p>
+        </div>
+        <button id="selectBtn" class="btn btn-ghost" type="button" hidden>Select to merge</button>
+      </div>
+      <div id="mergeBar" class="merge-bar" hidden>
+        <p id="mergeCount" class="merge-count">Select two or more lectures to merge.</p>
+        <label class="check">
+          <input id="removeOriginals" type="checkbox" />
+          <span>Delete the originals after merging</span>
+        </label>
+        <button id="mergeBtn" class="btn btn-primary" type="button" disabled>Merge</button>
+      </div>
       <ul id="libraryList" class="library-list"></ul>
       <p id="libraryEmpty" class="muted empty-library">No saved lectures yet.</p>
     </section>

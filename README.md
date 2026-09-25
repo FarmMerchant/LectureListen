@@ -45,6 +45,11 @@ No environment variables or API keys go on the server. Each visitor adds their o
   - formulas written in LaTeX (`$…$` inline, `$$…$$` or `\[…\]` on their own line) and rendered with [KaTeX](https://katex.org). The downloaded `.md` keeps the LaTeX, so it also renders in Obsidian, Notion or Typora.
   - a list of transcript lines judged to be student chatter. These lines are hidden, not deleted. Use **Show removed** to see them and **Restore** to bring one back, or **Remove** any line yourself.
 - **Library**: recordings, transcripts and notes are saved in the browser (IndexedDB) and autosaved every 30 seconds while recording. If the tab closes mid-lecture, the recording so far is recovered.
+- **Merge lectures**: in the library, click **Select to merge**, tick two or more lectures, and click **Merge**. Recordings and imported transcripts can be mixed.
+  - They're joined in the order they were recorded into a new lecture. The timeline runs on from one to the next, and a divider names each source lecture.
+  - Audio parts, chatter marks and your edits carry over.
+  - If an AI provider is set up, the merged lecture gets fresh notes.
+  - The originals are kept unless you tick **Delete the originals after merging**.
 - **Exports**: transcript `.txt` (chatter excluded), notes `.md`, audio.
 
 ## AI setup

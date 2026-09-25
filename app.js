@@ -55,6 +55,11 @@ const els = {
   autoNotes: $('autoNotes'),
   notesBody: $('notesBody'),
   libraryCount: $('libraryCount'),
+  selectBtn: $('selectBtn'),
+  mergeBar: $('mergeBar'),
+  mergeCount: $('mergeCount'),
+  mergeBtn: $('mergeBtn'),
+  removeOriginals: $('removeOriginals'),
   libraryList: $('libraryList'),
   libraryEmpty: $('libraryEmpty'),
 };
@@ -168,6 +173,8 @@ const state = {
   noticeKind: null,
   showChatter: false,
   generatingId: null, // lecture currently being summarized
+  selecting: false, // library is in "select to merge" mode
+  selectedIds: new Set(),
   notesError: '',
   notesProgress: '',
 };
@@ -850,12 +857,12 @@ function transcriptText(lecture) {
     lectureMeta(lecture),
     removed ? `(${removed} background chatter line${removed === 1 ? '' : 's'} removed)` : '',
   ].filter(Boolean).join('\n');
-  const pending = [...(lecture.breaks || [])];
+  const marks = breakPositions(lecture).sort((a, b) => a.at - b.at || a.order - b.order);
   const lines = [];
-  for (const s of kept) {
-    while (pending.length && s.t != null && s.t >= pending[0].t) lines.push(`— Continued ${formatDate(pending.shift().at)} —`);
-    lines.push(s.t == null ? s.text : `[${formatClock(s.t)}] ${s.text}`);
-  }
+  lecture.segments.forEach((s, i) => {
+    while (marks.length && marks[0].at <= i) lines.push(`— ${breakLabel(marks.shift().pause)} —`);
+    if (!s.chatter) lines.push(s.t == null ? s.text : `[${formatClock(s.t)}] ${s.text}`);
+  });
   return `${header}\n\n${lines.join(kept.some((s) => s.t == null) ? '\n\n' : '\n')}\n`;
 }
 
@@ -921,11 +928,27 @@ function segmentEl(segment, index) {
   return row;
 }
 
+// Where each break (a continued session, or a lecture merged in) starts, as a
+// segment index. Merged breaks store the index; continued ones only a time.
+function breakPositions(lecture) {
+  const segments = lecture?.segments ?? [];
+  return (lecture?.breaks || []).map((pause, order) => {
+    let at = pause.index ?? segments.findIndex((s) => s.t != null && s.t >= pause.t);
+    if (at === -1 || at > segments.length) at = segments.length;
+    return { at, order, pause };
+  });
+}
+
+function breakLabel(pause) {
+  return `${pause.label || 'Continued'} · ${formatDate(pause.at)}`;
+}
+
 function dividerEl(pause) {
   const div = document.createElement('div');
   div.className = 'seg-divider';
   const label = document.createElement('span');
-  label.textContent = `Continued · ${formatDate(pause.at)}`;
+  label.textContent = breakLabel(pause);
+  label.title = label.textContent;
   div.append(label);
   return div;
 }
@@ -934,11 +957,9 @@ function renderTranscript() {
   const lecture = state.lecture;
   const segments = lecture?.segments ?? [];
   const rows = segments.map(segmentEl);
-  // Mark where the lecture was continued. Insert the latest first so earlier positions stay valid.
-  for (const pause of [...(lecture?.breaks || [])].reverse()) {
-    const at = segments.findIndex((s) => s.t != null && s.t >= pause.t);
-    rows.splice(at === -1 ? rows.length : at, 0, dividerEl(pause));
-  }
+  // Insert dividers from the end backwards so earlier positions stay valid.
+  const marks = breakPositions(lecture).sort((a, b) => b.at - a.at || b.order - a.order);
+  for (const { at, pause } of marks) rows.splice(at, 0, dividerEl(pause));
   els.segments.replaceChildren(...rows);
   renderInterim();
   updateTranscriptMeta();
@@ -1393,10 +1414,38 @@ async function renderLibrary() {
   els.libraryEmpty.hidden = lectures.length > 0;
   const live = state.status === 'recording' || state.status === 'paused' || state.status === 'stopping';
 
+  els.selectBtn.hidden = lectures.length < 2 && !state.selecting;
+  if (state.selecting) updateMergeBar(lectures);
+
   els.libraryList.replaceChildren(...lectures.map((lecture) => {
     const li = document.createElement('li');
     li.className = 'lecture-item';
-    li.classList.toggle('active', lecture.id === state.lecture?.id);
+    li.classList.toggle('active', lecture.id === state.lecture?.id && !state.selecting);
+
+    if (state.selecting) {
+      const blocker = mergeBlocker(lecture);
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.className = 'select-box';
+      box.checked = state.selectedIds.has(lecture.id);
+      box.disabled = Boolean(blocker);
+      box.setAttribute('aria-label', `Select “${lecture.title}”`);
+      li.classList.add('selectable');
+      li.classList.toggle('selected', box.checked);
+      li.classList.toggle('blocked', Boolean(blocker));
+      li.title = blocker;
+      const toggle = () => {
+        if (blocker) return;
+        if (state.selectedIds.has(lecture.id)) state.selectedIds.delete(lecture.id);
+        else state.selectedIds.add(lecture.id);
+        renderLibrary();
+      };
+      li.addEventListener('click', (e) => {
+        if (e.target !== box) toggle();
+      });
+      box.addEventListener('change', toggle);
+      li.append(box);
+    }
 
     const h3 = document.createElement('h3');
     h3.textContent = lecture.title;
@@ -1420,6 +1469,7 @@ async function renderLibrary() {
     if (lecture.status === 'recording') badge('Recording');
     if (lecture.recovered) badge('Recovered');
     if (lecture.source === 'import') badge('Imported', 'badge-ok');
+    if (lecture.source === 'merge') badge(`Merged ×${lecture.mergedFrom?.length || 2}`, 'badge-ok');
     if (state.generatingId === lecture.id) badge('Summarizing…');
     else if (queuedIds.has(lecture.id)) badge('Queued');
     else if (lecture.notes) badge('Notes', 'badge-ok');
@@ -1443,6 +1493,7 @@ async function renderLibrary() {
     del.disabled = live && lecture.id === state.lecture?.id;
     del.addEventListener('click', () => deleteLecture(lecture));
     actions.append(open, del);
+    actions.hidden = state.selecting;
 
     li.append(h3, meta, preview, actions);
     return li;
@@ -1482,6 +1533,97 @@ async function deleteLecture(lecture) {
   await db.remove(lecture.id);
   if (state.lecture?.id === lecture.id) resetToIdle();
   renderLibrary();
+}
+
+// --- Merging lectures ------------------------------------------------------------------
+
+// A lecture can be merged unless it's being recorded or its notes are being written.
+function mergeBlocker(lecture) {
+  if (lecture.status !== 'done' || (isLive() && lecture.id === state.lecture?.id)) return 'Being recorded';
+  if (isSummarizing(lecture.id)) return 'Notes are being written';
+  return '';
+}
+
+function setSelecting(on) {
+  state.selecting = on;
+  state.selectedIds.clear();
+  els.selectBtn.textContent = on ? 'Cancel' : 'Select to merge';
+  els.mergeBar.hidden = !on;
+  renderLibrary();
+}
+
+function updateMergeBar(lectures) {
+  const chosen = lectures.filter((l) => state.selectedIds.has(l.id)).sort((a, b) => a.createdAt - b.createdAt);
+  els.mergeBtn.disabled = chosen.length < 2;
+  els.mergeCount.textContent = chosen.length < 2
+    ? 'Select two or more lectures to merge.'
+    : `Merge in recording order: ${chosen.map((l) => `“${l.title}”`).join(' → ')}`;
+}
+
+/** Joins lectures (in recording order) into a new lecture. */
+function buildMerged(lectures) {
+  const merged = {
+    id: crypto.randomUUID(),
+    title: `${lectures[0].title} (merged)`,
+    titleEdited: false, // let the AI suggest a title covering all parts
+    createdAt: lectures[0].createdAt,
+    duration: 0,
+    lang: lectures[0].lang,
+    engine: 'merge',
+    source: 'merge',
+    mergedFrom: lectures.map((l) => ({ id: l.id, title: l.title, createdAt: l.createdAt })),
+    segments: [],
+    breaks: [],
+    audioParts: [],
+    notes: null,
+    mimeType: lectures.at(-1).mimeType || '',
+    status: 'done',
+  };
+
+  let offset = 0;
+  for (const lecture of lectures) {
+    const base = merged.segments.length;
+    // A merged lecture already starts with its own labelled dividers.
+    if (lecture.source !== 'merge') merged.breaks.push({ index: base, t: offset, at: lecture.createdAt, label: lecture.title });
+    // Keep the lecture's own continuation dividers, re-anchored in the merged transcript.
+    for (const { at, pause } of breakPositions(lecture)) {
+      merged.breaks.push({ ...pause, index: base + at, t: (pause.t ?? 0) + offset });
+    }
+    merged.segments.push(...lecture.segments.map((s) => ({ ...s, t: s.t == null ? null : s.t + offset })));
+    merged.audioParts.push(...audioPartsOf(lecture).map((p) => ({ ...p, start: p.start + offset })));
+
+    // Imported transcripts only know when their last line started; leave a gap after them.
+    const lastLine = Math.max(0, ...lecture.segments.map((s) => s.t ?? 0));
+    const length = Math.max(lecture.duration || 0, lastLine);
+    offset += length + (lecture.source === 'import' && length ? 5000 : 0);
+  }
+  merged.duration = offset;
+  return merged;
+}
+
+async function mergeSelected() {
+  const ids = [...state.selectedIds];
+  // Prefer the on-screen copy of a lecture: it may have edits that haven't been saved yet.
+  const lectures = (await Promise.all(ids.map((id) => (state.lecture?.id === id ? state.lecture : db.get(id)))))
+    .filter((l) => l && !mergeBlocker(l))
+    .sort((a, b) => a.createdAt - b.createdAt);
+  if (lectures.length < 2) return;
+
+  const removeOriginals = els.removeOriginals.checked;
+  if (removeOriginals && !confirm(`Merge ${lectures.length} lectures and delete the originals? The merged lecture keeps all their recordings and transcripts.`)) return;
+
+  const merged = buildMerged(lectures);
+  await persist(merged);
+  if (removeOriginals) {
+    for (const l of lectures) {
+      queuedIds.delete(l.id);
+      await db.remove(l.id);
+    }
+  }
+  setSelecting(false);
+  if (!isLive()) showLecture(merged);
+  else renderLibrary();
+  if (aiReady()) queueNotes(merged);
 }
 
 function resetToIdle() {
@@ -1623,6 +1765,9 @@ els.clearKeyBtn.addEventListener('click', () => {
   saveProviderPref('keys', '');
   aiSettingsChanged();
 });
+
+els.selectBtn.addEventListener('click', () => setSelecting(!state.selecting));
+els.mergeBtn.addEventListener('click', mergeSelected);
 
 els.importBtn.addEventListener('click', () => els.importInput.click());
 els.emptyImportBtn.addEventListener('click', () => els.importInput.click());
