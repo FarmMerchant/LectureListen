@@ -183,7 +183,27 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
   background: var(--warn-soft); color: var(--warn); font-size: 0.875rem;
 }
 
+.btn-continue { width: 100%; margin-top: -6px; }
+.btn-continue .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--record); }
+
 .playback { display: flex; flex-direction: column; gap: 10px; }
+.part-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.part-tabs:empty { display: none; }
+.part-tab {
+  padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--muted); font: inherit; font-size: 0.8rem; cursor: pointer;
+}
+.part-tab.active { background: var(--accent-soft); color: var(--accent); border-color: transparent; font-weight: 600; }
+
+.seg-divider {
+  display: flex; align-items: center; gap: 10px; margin: 14px 0 8px;
+  color: var(--muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.seg-divider::before, .seg-divider::after { content: ""; flex: 1; border-top: 1px dashed var(--border); }
+.notes-stale {
+  margin: 0 0 14px; padding: 10px 12px; border-radius: 9px;
+  background: var(--warn-soft); color: var(--warn); font-size: 0.875rem;
+}
 .playback audio { width: 100%; }
 .playback-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
@@ -218,6 +238,7 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
   cursor: pointer; justify-self: start;
 }
 .seg .ts:disabled { cursor: default; }
+.seg .ts-none { width: 1px; }
 .seg .text { margin: 0; line-height: 1.65; border-radius: 4px; padding: 0 2px; }
 .seg .text[contenteditable="true"]:hover { background: var(--surface-2); }
 
@@ -268,7 +289,36 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 .markdown strong { font-weight: 650; }
 .markdown code { font: 0.88em ui-monospace, Consolas, monospace; padding: 1px 5px; border-radius: 5px; background: var(--surface-2); }
 .markdown blockquote { margin: 0.6em 0; padding: 2px 14px; border-left: 3px solid var(--border); color: var(--muted); }
+.markdown .math { font-family: ui-monospace, Consolas, monospace; font-size: 0.92em; } /* until KaTeX loads */
+.markdown .math:has(.katex) { font-family: inherit; font-size: inherit; }
+.markdown .katex { font-size: 1.08em; }
+.markdown .math-display {
+  display: block; margin: 0.8em 0; padding: 4px 0;
+  overflow-x: auto; overflow-y: hidden; text-align: center;
+}
 .markdown hr { border: 0; border-top: 1px solid var(--border); margin: 1.2em 0; }
+
+.settings summary .muted { font-weight: 400; margin-left: 6px; }
+.settings-body .muted.warn { color: var(--warn); }
+#modelInput { margin-top: 6px; }
+.link-btn {
+  padding: 0; border: 0; background: none; font: inherit; color: var(--accent);
+  text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+}
+.empty-import { margin-top: 14px !important; }
+
+/* Import */
+.drop-overlay {
+  position: fixed; inset: 0; z-index: 50; pointer-events: none;
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  backdrop-filter: blur(3px);
+}
+.drop-card {
+  padding: 36px 48px; border-radius: var(--radius); text-align: center;
+  background: var(--surface); border: 2px dashed var(--accent); box-shadow: var(--shadow);
+}
+.drop-card p { margin: 4px 0; }
 
 /* Library */
 .library { margin-top: 40px; scroll-margin-top: 80px; }
@@ -308,6 +358,9 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 }
 
 @media (max-width: 520px) {
+  .hide-sm { display: none; }
+  .topbar-actions { gap: 0; }
+  .topbar-actions .btn { padding: 9px 10px; }
   .container { padding: 16px; }
   .topbar { padding: 10px 16px; }
   .field-row { flex-direction: column; }

@@ -1,0 +1,13 @@
+{
+  "name": "lecturelisten",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Record lectures, transcribe them, and turn them into study notes.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

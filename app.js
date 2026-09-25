@@ -1,4 +1,5 @@
-import { generateNotes, renderMarkdown } from './notes.js';
+import { generateNotes, listModels, renderMarkdown, typesetMath, PROVIDERS } from './notes.js';
+import { parseTranscript, IMPORT_EXTENSIONS } from './transcript-import.js';
 import { loadWhisper, WhisperSession } from './whisper.js';
 
 const $ = (id) => document.getElementById(id);
@@ -19,6 +20,8 @@ const els = {
   notice: $('notice'),
   playback: $('playback'),
   player: $('player'),
+  partTabs: $('partTabs'),
+  continueBtn: $('continueBtn'),
   downloadAudioBtn: $('downloadAudioBtn'),
   newBtn: $('newBtn'),
   wordCount: $('wordCount'),
@@ -34,6 +37,18 @@ const els = {
   copyNotesBtn: $('copyNotesBtn'),
   downloadNotesBtn: $('downloadNotesBtn'),
   settings: $('settings'),
+  providerSelect: $('providerSelect'),
+  providerSummary: $('providerSummary'),
+  providerHelp: $('providerHelp'),
+  modelSelect: $('modelSelect'),
+  modelInput: $('modelInput'),
+  baseUrlField: $('baseUrlField'),
+  baseUrlInput: $('baseUrlInput'),
+  apiKeyLabel: $('apiKeyLabel'),
+  importBtn: $('importBtn'),
+  importInput: $('importInput'),
+  emptyImportBtn: $('emptyImportBtn'),
+  dropOverlay: $('dropOverlay'),
   apiKey: $('apiKey'),
   saveKeyBtn: $('saveKeyBtn'),
   clearKeyBtn: $('clearKeyBtn'),
@@ -127,6 +142,9 @@ const state = {
   stream: null,
   recorder: null,
   chunks: [],
+  partStart: 0, // lecture time (ms) where this recording session's audio begins
+  playbackParts: [],
+  partIndex: 0,
   recognition: null,
   recognitionBlocked: false,
   whisper: null, // on-device transcription session
@@ -149,7 +167,7 @@ const state = {
   audioUrl: null,
   noticeKind: null,
   showChatter: false,
-  generating: false,
+  generatingId: null, // lecture currently being summarized
   notesError: '',
   notesProgress: '',
 };
@@ -242,18 +260,36 @@ function populateLanguages() {
 // --- Recording --------------------------------------------------------------------
 
 function pickMimeType() {
-  const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+  // Ogg first: Firefox's WebM recordings have no seek index, so timestamps couldn't
+  // jump into them. Chrome and Edge can't record Ogg and fall through to WebM.
+  const types = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
   return types.find((t) => window.MediaRecorder?.isTypeSupported?.(t)) || '';
 }
 
-async function startRecording() {
+// Audio is stored as one part per recording session, because separate
+// MediaRecorder files can't simply be joined. Older lectures have one audioBlob.
+function audioPartsOf(lecture) {
+  if (lecture?.audioParts?.length) return lecture.audioParts;
+  if (lecture?.audioBlob?.size) {
+    return [{ blob: lecture.audioBlob, mimeType: lecture.mimeType, start: 0, duration: lecture.duration }];
+  }
+  return [];
+}
+
+function canContinue(lecture) {
+  return state.status === 'stopped' && lecture?.status === 'done' && !isSummarizing(lecture.id);
+}
+
+/** @param {{ resume?: boolean }} [options] resume: keep recording into the lecture on screen */
+async function startRecording({ resume = false } = {}) {
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
     showNotice('This browser can’t record audio here. Use a recent Chrome, Edge, Safari or Firefox over https:// or http://localhost.');
     return;
   }
   hideNotice();
 
-  if (state.status === 'stopped') resetToIdle();
+  const continuing = resume && canContinue(state.lecture) ? state.lecture : null;
+  if (state.status === 'stopped' && !continuing) resetToIdle();
 
   let stream;
   try {
@@ -288,27 +324,45 @@ async function startRecording() {
     return;
   }
 
-  const typedTitle = els.title.value.trim();
-  state.lecture = {
-    id: crypto.randomUUID(),
-    title: typedTitle || defaultTitle(),
-    titleEdited: Boolean(typedTitle) && typedTitle !== els.title.dataset.default,
-    createdAt: Date.now(),
-    duration: 0,
-    lang: els.langSelect.value,
-    engine: els.engineSelect.value,
-    segments: [],
-    notes: null,
-    mimeType: recorder.mimeType || mimeType || 'audio/webm',
-    audioBlob: null,
-    status: 'recording',
-  };
-  els.title.value = state.lecture.title;
+  const recordedType = recorder.mimeType || mimeType || 'audio/webm';
+  if (continuing) {
+    // Pick up the timeline where the lecture left off. Imported transcripts only
+    // know when their last line started, so leave a small gap after it.
+    const offset = (continuing.duration || 0) + (continuing.source === 'import' && continuing.duration ? 5000 : 0);
+    continuing.audioParts = audioPartsOf(continuing);
+    continuing.audioBlob = null;
+    continuing.breaks = [...(continuing.breaks || []), { t: offset, at: Date.now() }];
+    continuing.continuedAt = Date.now();
+    continuing.lang = els.langSelect.value;
+    continuing.engine = els.engineSelect.value;
+    continuing.mimeType = recordedType;
+    continuing.status = 'recording';
+    state.accumulated = offset;
+  } else {
+    const typedTitle = els.title.value.trim();
+    state.lecture = {
+      id: crypto.randomUUID(),
+      title: typedTitle || defaultTitle(),
+      titleEdited: Boolean(typedTitle) && typedTitle !== els.title.dataset.default,
+      createdAt: Date.now(),
+      duration: 0,
+      lang: els.langSelect.value,
+      engine: els.engineSelect.value,
+      segments: [],
+      notes: null,
+      mimeType: recordedType,
+      audioParts: [],
+      status: 'recording',
+    };
+    els.title.value = state.lecture.title;
+    state.accumulated = 0;
+  }
 
   state.stream = stream;
   state.recorder = recorder;
   state.chunks = [];
-  state.accumulated = 0;
+  state.partStart = state.accumulated;
+  state.partRecordedAt = Date.now();
   state.runStart = performance.now();
   state.recognitionBlocked = false;
   state.recognitionFailures = 0;
@@ -379,7 +433,8 @@ async function finishRecording() {
     state.whisper = null;
     renderInterim();
   }
-  lecture.audioBlob = new Blob(state.chunks, { type: lecture.mimeType });
+  lecture.audioParts = [...audioPartsOf(lecture), currentPart(lecture, state.accumulated)];
+  lecture.audioBlob = null;
   lecture.duration = Math.round(state.accumulated);
   lecture.status = 'done';
   state.chunks = [];
@@ -393,17 +448,30 @@ async function finishRecording() {
   updateUI();
   renderLibrary();
 
-  if (lecture.segments.length && els.autoNotes.checked && getApiKey()) runNotes();
+  if (lecture.segments.length && els.autoNotes.checked && aiReady()) queueNotes(lecture);
 }
 
 function autosave() {
   const lecture = state.lecture;
   if (!lecture || (state.status !== 'recording' && state.status !== 'paused')) return;
+  const now = elapsed();
   persist({
     ...lecture,
-    duration: Math.round(elapsed()),
-    audioBlob: new Blob(state.chunks, { type: lecture.mimeType }),
+    duration: Math.round(now),
+    audioParts: [...audioPartsOf(lecture), currentPart(lecture, now)],
+    audioBlob: null,
   }).then(renderLibrary);
+}
+
+// The audio recorded in this session so far.
+function currentPart(lecture, endMs) {
+  return {
+    blob: new Blob(state.chunks, { type: lecture.mimeType }),
+    mimeType: lecture.mimeType,
+    start: Math.round(state.partStart),
+    duration: Math.round(endMs - state.partStart),
+    recordedAt: state.partRecordedAt,
+  };
 }
 
 // --- Live transcription ------------------------------------------------------------
@@ -698,15 +766,63 @@ function clearPlayback() {
   els.player.load();
   if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
   state.audioUrl = null;
+  state.playbackParts = [];
+  els.partTabs.replaceChildren();
   els.playback.hidden = true;
 }
 
 function showPlayback(lecture) {
   clearPlayback();
-  if (!lecture.audioBlob?.size) return;
-  state.audioUrl = URL.createObjectURL(lecture.audioBlob);
-  els.player.src = state.audioUrl;
+  const parts = audioPartsOf(lecture).filter((p) => p.blob?.size);
+  if (!parts.length) return;
+  state.playbackParts = parts;
+  if (parts.length > 1) {
+    els.partTabs.replaceChildren(...parts.map((part, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'part-tab';
+      b.textContent = `Part ${i + 1} · ${formatClock(part.start)}`;
+      b.title = part.recordedAt ? `Recorded ${formatDate(part.recordedAt)}` : '';
+      b.addEventListener('click', () => loadPart(i));
+      return b;
+    }));
+  }
+  loadPart(0);
   els.playback.hidden = false;
+  els.downloadAudioBtn.textContent = parts.length > 1 ? `Download audio (${parts.length} parts)` : 'Download audio';
+}
+
+function loadPart(index, seekMs = 0, play = false) {
+  const part = state.playbackParts[index];
+  if (!part) return;
+  if (index !== state.partIndex || !state.audioUrl) {
+    if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
+    state.audioUrl = URL.createObjectURL(part.blob);
+    els.player.src = state.audioUrl;
+    state.partIndex = index;
+  }
+  [...els.partTabs.children].forEach((b, i) => b.classList.toggle('active', i === index));
+  const seek = () => {
+    if (seekMs) {
+      const target = seekMs / 1000;
+      els.player.currentTime = target;
+      // Recordings without a seek index can ignore an early seek; apply it again once data arrives.
+      els.player.addEventListener('canplay', () => {
+        if (Math.abs(els.player.currentTime - target) > 1.5) els.player.currentTime = target;
+      }, { once: true });
+    }
+    if (play) els.player.play().catch(() => {});
+  };
+  if (els.player.readyState >= 1) seek();
+  else els.player.addEventListener('loadedmetadata', seek, { once: true });
+}
+
+// Plays the lecture from a timeline position, switching to the part that contains it.
+function playAt(ms) {
+  const parts = state.playbackParts;
+  let index = 0;
+  parts.forEach((p, i) => { if (p.start <= ms) index = i; });
+  loadPart(index, Math.max(0, ms - parts[index].start), true);
 }
 
 function audioExtension(mimeType) {
@@ -731,16 +847,27 @@ function transcriptText(lecture) {
   const removed = lecture.segments.length - kept.length;
   const header = [
     lecture.title,
-    `${formatDate(lecture.createdAt)} · ${formatDuration(lecture.duration || elapsed())}`,
+    lectureMeta(lecture),
     removed ? `(${removed} background chatter line${removed === 1 ? '' : 's'} removed)` : '',
   ].filter(Boolean).join('\n');
-  return `${header}\n\n${kept.map((s) => `[${formatClock(s.t)}] ${s.text}`).join('\n')}\n`;
+  const pending = [...(lecture.breaks || [])];
+  const lines = [];
+  for (const s of kept) {
+    while (pending.length && s.t != null && s.t >= pending[0].t) lines.push(`— Continued ${formatDate(pending.shift().at)} —`);
+    lines.push(s.t == null ? s.text : `[${formatClock(s.t)}] ${s.text}`);
+  }
+  return `${header}\n\n${lines.join(kept.some((s) => s.t == null) ? '\n\n' : '\n')}\n`;
+}
+
+function lectureMeta(lecture) {
+  const duration = lecture.duration || (lecture.id === state.lecture?.id ? elapsed() : 0);
+  return [formatDate(lecture.createdAt), duration ? formatDuration(duration) : '', lecture.fileName ? `from ${lecture.fileName}` : '']
+    .filter(Boolean).join(' · ');
 }
 
 function notesText(lecture) {
   const { notes } = lecture;
-  return `# ${lecture.title}\n\n_${formatDate(lecture.createdAt)} · ${formatDuration(lecture.duration)}_\n\n` +
-    `> ${notes.summary}\n\n${notes.markdown}\n`;
+  return `# ${lecture.title}\n\n_${lectureMeta(lecture)}_\n\n> ${notes.summary}\n\n${notes.markdown}\n`;
 }
 
 async function copyText(text, button) {
@@ -762,11 +889,17 @@ function segmentEl(segment, index) {
   row.dataset.index = index;
   row.classList.toggle('chatter', Boolean(segment.chatter));
 
-  const ts = document.createElement('button');
-  ts.type = 'button';
-  ts.className = 'ts';
-  ts.textContent = formatClock(segment.t);
-  ts.title = 'Play from here';
+  let ts;
+  if (segment.t == null) {
+    ts = document.createElement('span'); // imported plain text has no timestamps
+    ts.className = 'ts-none';
+  } else {
+    ts = document.createElement('button');
+    ts.type = 'button';
+    ts.className = 'ts';
+    ts.textContent = formatClock(segment.t);
+    ts.title = 'Play from here';
+  }
 
   const text = document.createElement('p');
   text.className = 'text';
@@ -788,9 +921,25 @@ function segmentEl(segment, index) {
   return row;
 }
 
+function dividerEl(pause) {
+  const div = document.createElement('div');
+  div.className = 'seg-divider';
+  const label = document.createElement('span');
+  label.textContent = `Continued · ${formatDate(pause.at)}`;
+  div.append(label);
+  return div;
+}
+
 function renderTranscript() {
-  const segments = state.lecture?.segments ?? [];
-  els.segments.replaceChildren(...segments.map(segmentEl));
+  const lecture = state.lecture;
+  const segments = lecture?.segments ?? [];
+  const rows = segments.map(segmentEl);
+  // Mark where the lecture was continued. Insert the latest first so earlier positions stay valid.
+  for (const pause of [...(lecture?.breaks || [])].reverse()) {
+    const at = segments.findIndex((s) => s.t != null && s.t >= pause.t);
+    rows.splice(at === -1 ? rows.length : at, 0, dividerEl(pause));
+  }
+  els.segments.replaceChildren(...rows);
   renderInterim();
   updateTranscriptMeta();
 }
@@ -837,9 +986,8 @@ els.segments.addEventListener('click', (e) => {
   const segment = state.lecture.segments[Number(row.dataset.index)];
 
   if (e.target.closest('.ts')) {
-    if (!state.audioUrl) return;
-    els.player.currentTime = segment.t / 1000;
-    els.player.play();
+    if (!state.playbackParts.length || segment.t == null) return;
+    playAt(segment.t);
   } else if (e.target.closest('.seg-toggle')) {
     segment.chatter = !segment.chatter;
     row.replaceWith(segmentEl(segment, Number(row.dataset.index)));
@@ -863,29 +1011,238 @@ els.segments.addEventListener('keydown', (e) => {
   }
 });
 
+// --- AI settings -------------------------------------------------------------------------
+
+function aiConfig() {
+  const prefs = loadPrefs();
+  const provider = PROVIDERS[prefs.provider] ? prefs.provider : 'anthropic';
+  return {
+    provider,
+    apiKey: (prefs.keys?.[provider] || '').trim(),
+    model: (prefs.models?.[provider] || PROVIDERS[provider].defaultModel || '').trim(),
+    baseUrl: (prefs.baseUrl || '').trim(),
+  };
+}
+
+function providerName(provider = aiConfig().provider) {
+  return PROVIDERS[provider].label.split(' (')[0];
+}
+
+function aiReady() {
+  const { provider, apiKey, model, baseUrl } = aiConfig();
+  const p = PROVIDERS[provider];
+  if (!model || (p.needsBaseUrl && !baseUrl)) return false;
+  return Boolean(apiKey) || Boolean(p.keyOptional);
+}
+
+// Stores a per-provider value (keys, models) for the selected provider.
+function saveProviderPref(field, value) {
+  const prefs = loadPrefs();
+  savePrefs({ [field]: { ...(prefs[field] || {}), [aiConfig().provider]: value } });
+}
+
+// Shows enough of a saved key to tell which one it is, without revealing it.
+function maskKey(key) {
+  return key.length > 12 ? `${key.slice(0, 4)}…${key.slice(-4)}` : '•'.repeat(key.length);
+}
+
+// Key prefixes that clearly belong to a different provider.
+const FOREIGN_KEY = {
+  anthropic: [/^AIza/, 'a Google key'],
+  gemini: [/^sk-ant-/, 'an Anthropic key', /^sk-/, 'an OpenAI key'],
+  openai: [/^sk-ant-/, 'an Anthropic key', /^AIza/, 'a Google key'],
+};
+
+function foreignKeyWarning(provider, key) {
+  const rules = FOREIGN_KEY[provider] || [];
+  for (let i = 0; i < rules.length; i += 2) {
+    if (rules[i].test(key)) return `That looks like ${rules[i + 1]}, not a ${providerName(provider)} key.`;
+  }
+  return '';
+}
+
+function renderAISettings({ keepCustomModel = false } = {}) {
+  const { provider, apiKey, model, baseUrl } = aiConfig();
+  const p = PROVIDERS[provider];
+  els.providerSelect.value = provider;
+  renderModelSelect(keepCustomModel);
+  els.baseUrlField.hidden = !p.needsBaseUrl;
+  els.baseUrlInput.value = baseUrl;
+  els.apiKeyLabel.textContent = `${providerName(provider)} API key${p.keyOptional ? ' (optional)' : ''}`;
+  els.apiKey.value = '';
+  els.apiKey.placeholder = apiKey ? `Saved: ${maskKey(apiKey)} (paste a new key to replace it)` : p.keyPlaceholder;
+  const warning = apiKey ? foreignKeyWarning(provider, apiKey) : '';
+  els.providerHelp.textContent = `${warning ? `⚠ ${warning} ` : ''}${p.keyHelp} Keys are stored in this browser only and sent only to the provider.`;
+  els.providerHelp.classList.toggle('warn', Boolean(warning));
+  els.providerSummary.textContent = aiReady() ? `· ${providerName(provider)} · ${model}` : '· not set up';
+}
+
+const CUSTOM_MODEL = '__custom__';
+const fetchedModels = {}; // provider -> models the saved key can use
+
+function renderModelSelect(keepCustom = false) {
+  const { provider, model } = aiConfig();
+  const p = PROVIDERS[provider];
+  const fetched = (fetchedModels[provider] || []).filter((m) => !p.models.includes(m)).sort();
+  const selected = model && !p.models.includes(model) && !fetched.includes(model) ? [model] : [];
+
+  const group = (label, ids) => {
+    const g = document.createElement('optgroup');
+    g.label = label;
+    g.append(...ids.map((id) => new Option(id === p.defaultModel ? `${id} (default)` : id, id)));
+    return g;
+  };
+  const options = [];
+  if (selected.length) options.push(group('Selected', selected));
+  if (p.models.length) options.push(group('Recommended', p.models));
+  if (fetched.length) options.push(group('Available with your key', fetched));
+  options.push(new Option('Other model (type its name)…', CUSTOM_MODEL));
+
+  const customOpen = keepCustom && !els.modelInput.hidden;
+  els.modelSelect.replaceChildren(...options);
+  if (customOpen || !model) {
+    els.modelSelect.value = CUSTOM_MODEL;
+    els.modelInput.hidden = false;
+    if (!customOpen) els.modelInput.value = '';
+  } else {
+    els.modelSelect.value = model;
+    els.modelInput.hidden = true;
+  }
+  els.modelInput.placeholder = provider === 'compatible' ? 'e.g. meta-llama/llama-4-scout' : 'Exact model name';
+}
+
+// Adds the models this key can actually use to the dropdown.
+async function refreshModelSuggestions() {
+  const config = aiConfig();
+  const p = PROVIDERS[config.provider];
+  if (!config.apiKey && !p.keyOptional) return;
+  const models = await listModels(config);
+  if (models.length && aiConfig().provider === config.provider) {
+    fetchedModels[config.provider] = models;
+    renderModelSelect(true);
+  }
+}
+
 // --- Notes -----------------------------------------------------------------------------
 
-function getApiKey() {
-  return (loadPrefs().apiKey || '').trim();
+const queuedIds = new Set(); // lectures waiting for their turn to be summarized
+let notesChain = Promise.resolve();
+
+function isSummarizing(id) {
+  return id != null && (state.generatingId === id || queuedIds.has(id));
+}
+
+function queueNotes(lecture) {
+  if (!lecture?.segments.length || isSummarizing(lecture.id)) return;
+  if (!aiReady()) {
+    els.settings.open = true;
+    els.settings.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    (aiConfig().model ? els.apiKey : els.modelSelect).focus({ preventScroll: true });
+    return;
+  }
+  queuedIds.add(lecture.id);
+  if (state.lecture?.id === lecture.id) state.notesError = '';
+  renderNotes();
+  renderLibrary();
+  notesChain = notesChain.then(() => summarize(lecture.id));
+}
+
+async function summarize(id) {
+  queuedIds.delete(id);
+  // Use the copy that's on screen, if any, so edits made while waiting are kept.
+  const lecture = state.lecture?.id === id ? state.lecture : await db.get(id).catch(() => null);
+  if (!lecture) return; // deleted while queued
+
+  const config = aiConfig();
+  const name = providerName(config.provider);
+  const started = Date.now();
+  let chars = 0;
+  const setProgress = () => {
+    const secs = Math.round((Date.now() - started) / 1000);
+    state.notesProgress = chars
+      ? `Writing notes… ${chars.toLocaleString()} characters`
+      : `Waiting for ${name}… ${secs}s`;
+    if (state.lecture?.id === id) els.notesStatus.textContent = state.notesProgress;
+  };
+  state.generatingId = id;
+  setProgress();
+  const ticker = setInterval(setProgress, 1000);
+  renderNotes();
+  renderLibrary();
+
+  let error = '';
+  try {
+    const result = await generateNotes({
+      ...config,
+      title: lecture.title,
+      segments: lecture.segments,
+      onProgress: (n) => {
+        chars = n;
+        setProgress();
+      },
+    });
+    const target = state.lecture?.id === id ? state.lecture : lecture;
+    const chatter = new Set(result.chatterIds);
+    target.segments.forEach((s, i) => { s.chatter = chatter.has(i); });
+    target.notes = {
+      summary: result.summary,
+      markdown: result.markdown,
+      model: result.model,
+      provider: config.provider,
+      generatedAt: Date.now(),
+    };
+    if (!target.titleEdited && result.title) target.title = result.title;
+    if (await db.get(id).catch(() => null)) await persist(target); // skip if deleted meanwhile
+  } catch (err) {
+    console.error(err);
+    error = err.message || 'Something went wrong generating notes.';
+  } finally {
+    clearInterval(ticker);
+    state.generatingId = null;
+    state.notesProgress = '';
+  }
+
+  if (state.lecture?.id === id) {
+    state.notesError = error;
+    els.title.value = state.lecture.title;
+    renderTranscript();
+  } else if (error) {
+    showNotice(`Couldn’t summarize “${lecture.title}”: ${error}`);
+  }
+  renderNotes();
+  renderLibrary();
 }
 
 function updateNotesControls() {
   const lecture = state.lecture;
-  const canGenerate = lecture?.status === 'done' && lecture.segments.length > 0 && !state.generating;
-  els.generateBtn.disabled = !canGenerate;
-  els.generateBtn.textContent = state.generating ? 'Generating…' : lecture?.notes ? 'Regenerate' : 'Generate notes';
+  const generating = state.generatingId != null && state.generatingId === lecture?.id;
+  const busy = isSummarizing(lecture?.id);
+  els.generateBtn.disabled = !(lecture?.status === 'done' && lecture.segments.length > 0 && !busy);
+  els.generateBtn.textContent = generating ? 'Generating…' : busy ? 'Queued…' : lecture?.notes ? 'Regenerate' : 'Generate notes';
   els.copyNotesBtn.disabled = els.downloadNotesBtn.disabled = !lecture?.notes;
+  els.continueBtn.hidden = !(state.status === 'stopped' && lecture?.status === 'done');
+  els.continueBtn.disabled = !canContinue(lecture);
+  els.continueBtn.title = busy ? 'Wait for the notes to finish first' : 'Record more into this lecture';
 }
 
 function renderNotes() {
   const lecture = state.lecture;
   const notes = lecture?.notes;
+  const generating = state.generatingId != null && state.generatingId === lecture?.id;
+  const queued = queuedIds.has(lecture?.id);
   const body = [];
 
   if (state.notesError) {
     const p = document.createElement('p');
     p.className = 'notes-error';
     p.textContent = state.notesError;
+    body.push(p);
+  }
+
+  if (notes && lecture.continuedAt > notes.generatedAt && !generating && !queued) {
+    const p = document.createElement('p');
+    p.className = 'notes-stale';
+    p.textContent = 'These notes were written before you continued the lecture. Press Regenerate to include the new part.';
     body.push(p);
   }
 
@@ -898,86 +1255,129 @@ function renderNotes() {
     md.className = 'markdown';
     md.innerHTML = renderMarkdown(notes.markdown); // renderer escapes all text
     body.push(summary, md);
-    els.notesStatus.textContent = `Generated ${formatDate(notes.generatedAt)}`;
+    typesetMath(md); // LaTeX → KaTeX, loaded only when the notes contain math
+    els.notesStatus.textContent = `Generated ${formatDate(notes.generatedAt)}${notes.model ? ` · ${notes.model}` : ''}`;
   } else {
     const empty = document.createElement('div');
     empty.className = 'empty';
     const msg = document.createElement('p');
     const sub = document.createElement('p');
     sub.className = 'muted';
-    if (state.generating) {
-      msg.textContent = 'Claude is reading the transcript…';
+    const about = 'The AI summarizes the lecture, organizes the notes, and removes background chatter from students.';
+    if (generating) {
+      msg.textContent = `${providerName()} is reading the transcript…`;
       sub.textContent = 'Long lectures can take a minute or two.';
-    } else if (!getApiKey()) {
-      msg.textContent = 'Add your Anthropic API key to turn transcripts into study notes.';
-      sub.textContent = 'Claude summarizes the lecture, organizes the notes, and removes background chatter from students.';
+    } else if (queued) {
+      msg.textContent = 'Queued. Another transcript is being summarized first.';
+    } else if (!aiReady()) {
+      msg.textContent = 'Choose an AI provider and add its API key under AI settings to turn transcripts into study notes.';
+      sub.textContent = `Works with Claude, Gemini, OpenAI, and OpenAI-compatible services. ${about}`;
     } else if (lecture?.status === 'done' && lecture.segments.length) {
       msg.textContent = 'No notes yet for this lecture.';
       sub.textContent = 'Press Generate notes to summarize it and remove background chatter.';
     } else {
-      msg.textContent = 'Notes appear here after you stop recording.';
-      sub.textContent = 'Claude summarizes the lecture, organizes the notes, and removes background chatter from students.';
+      msg.textContent = 'Notes appear here after you stop recording or import a transcript.';
+      sub.textContent = about;
     }
-    empty.append(msg, sub);
+    empty.append(msg);
+    if (sub.textContent) empty.append(sub);
     body.push(empty);
     els.notesStatus.textContent = '';
   }
 
-  if (state.generating) els.notesStatus.textContent = state.notesProgress || 'Sending transcript to Claude…';
+  if (generating) els.notesStatus.textContent = state.notesProgress;
+  else if (queued) els.notesStatus.textContent = 'Queued…';
   els.notesBody.replaceChildren(...body);
   updateNotesControls();
 }
 
-async function runNotes() {
-  const lecture = state.lecture;
-  if (!lecture || state.generating || !lecture.segments.length) return;
-  if (!getApiKey()) {
-    els.settings.open = true;
-    els.apiKey.focus();
+// --- Importing transcript files ------------------------------------------------------------
+
+async function importFiles(fileList) {
+  const imported = [];
+  const problems = [];
+  for (const file of [...fileList]) {
+    const ext = (file.name.match(/\.[^.]+$/)?.[0] || '').toLowerCase();
+    if (!IMPORT_EXTENSIONS.includes(ext) && !file.type.startsWith('text/')) {
+      problems.push(`${file.name} (only text files are supported; save Word or PDF files as .txt first)`);
+      continue;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      problems.push(`${file.name} (file is too large)`);
+      continue;
+    }
+    let parsed;
+    try {
+      parsed = parseTranscript(await file.text());
+    } catch (err) {
+      console.error(err);
+      problems.push(`${file.name} (couldn’t be read)`);
+      continue;
+    }
+    if (!parsed.segments.length) {
+      problems.push(`${file.name} (no text found)`);
+      continue;
+    }
+    const lecture = {
+      id: crypto.randomUUID(),
+      title: file.name.replace(/\.[^.]+$/, '').replace(/_+/g, ' ').trim() || 'Imported transcript',
+      titleEdited: false, // let the AI suggest a descriptive title; the file name stays in fileName
+      createdAt: Date.now(),
+      duration: parsed.duration,
+      lang: els.langSelect.value,
+      engine: 'import',
+      source: 'import',
+      fileName: file.name,
+      segments: parsed.segments,
+      notes: null,
+      mimeType: '',
+      audioBlob: null,
+      status: 'done',
+    };
+    await persist(lecture);
+    imported.push(lecture);
+  }
+
+  if (problems.length) showNotice(`Couldn’t import ${problems.join(', ')}.`);
+  else if (!isLive()) hideNotice();
+  if (!imported.length) {
+    renderLibrary();
     return;
   }
+  if (isLive()) renderLibrary(); // don't interrupt a recording; the imports are in the library
+  else showLecture(imported[0]);
 
-  state.generating = true;
-  state.notesError = '';
-  state.notesProgress = '';
-  renderNotes();
-
-  try {
-    const result = await generateNotes({
-      apiKey: getApiKey(),
-      title: lecture.title,
-      segments: lecture.segments,
-      onProgress: (chars) => {
-        state.notesProgress = `Writing notes… ${chars.toLocaleString()} characters`;
-        if (state.lecture === lecture) els.notesStatus.textContent = state.notesProgress;
-      },
-    });
-
-    const chatter = new Set(result.chatterIds);
-    lecture.segments.forEach((s, i) => { s.chatter = chatter.has(i); });
-    lecture.notes = {
-      summary: result.summary,
-      markdown: result.markdown,
-      model: result.model,
-      generatedAt: Date.now(),
-    };
-    if (!lecture.titleEdited && result.title) lecture.title = result.title;
-    await persist(lecture);
-  } catch (err) {
-    console.error(err);
-    if (state.lecture === lecture) state.notesError = err.message || 'Something went wrong generating notes.';
-  } finally {
-    state.generating = false;
-    state.notesProgress = '';
+  if (!aiReady()) {
+    queueNotes(imported[0]); // opens AI settings
+    return;
   }
-
-  if (state.lecture === lecture) {
-    els.title.value = lecture.title;
-    renderTranscript();
-  }
-  renderNotes();
-  renderLibrary();
+  for (const lecture of imported) queueNotes(lecture);
 }
+
+let dragDepth = 0;
+const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+
+window.addEventListener('dragenter', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth++;
+  els.dropOverlay.hidden = false;
+});
+window.addEventListener('dragover', (e) => {
+  if (hasFiles(e)) e.preventDefault();
+});
+window.addEventListener('dragleave', (e) => {
+  if (!hasFiles(e)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) els.dropOverlay.hidden = true;
+});
+window.addEventListener('drop', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  els.dropOverlay.hidden = true;
+  importFiles(e.dataTransfer.files);
+});
 
 // --- Library ------------------------------------------------------------------------------
 
@@ -1005,7 +1405,8 @@ async function renderLibrary() {
     const meta = document.createElement('div');
     meta.className = 'lecture-meta';
     const words = keptSegments(lecture).reduce((n, s) => n + countWords(s.text), 0);
-    for (const text of [formatDate(lecture.createdAt), formatDuration(lecture.duration), `${words.toLocaleString()} words`]) {
+    const details = [formatDate(lecture.createdAt), lecture.duration ? formatDuration(lecture.duration) : '', `${words.toLocaleString()} words`];
+    for (const text of details.filter(Boolean)) {
       const span = document.createElement('span');
       span.textContent = text;
       meta.append(span);
@@ -1018,7 +1419,10 @@ async function renderLibrary() {
     };
     if (lecture.status === 'recording') badge('Recording');
     if (lecture.recovered) badge('Recovered');
-    if (lecture.notes) badge('Notes', 'badge-ok');
+    if (lecture.source === 'import') badge('Imported', 'badge-ok');
+    if (state.generatingId === lecture.id) badge('Summarizing…');
+    else if (queuedIds.has(lecture.id)) badge('Queued');
+    else if (lecture.notes) badge('Notes', 'badge-ok');
 
     const preview = document.createElement('p');
     preview.className = 'lecture-preview';
@@ -1045,10 +1449,17 @@ async function renderLibrary() {
   }));
 }
 
+function isLive() {
+  return state.status === 'recording' || state.status === 'paused' || state.status === 'stopping';
+}
+
 async function openLecture(id) {
-  if (state.status === 'recording' || state.status === 'paused' || state.status === 'stopping') return;
+  if (isLive()) return;
   const lecture = await db.get(id);
-  if (!lecture) return;
+  if (lecture) showLecture(lecture);
+}
+
+function showLecture(lecture) {
   hideNotice();
   state.lecture = lecture;
   state.status = 'stopped';
@@ -1067,6 +1478,7 @@ async function openLecture(id) {
 
 async function deleteLecture(lecture) {
   if (!confirm(`Delete “${lecture.title}”? This removes its recording, transcript and notes.`)) return;
+  queuedIds.delete(lecture.id);
   await db.remove(lecture.id);
   if (state.lecture?.id === lecture.id) resetToIdle();
   renderLibrary();
@@ -1127,15 +1539,26 @@ function updateUI() {
 
 // --- Wiring ------------------------------------------------------------------------------
 
-els.recordBtn.addEventListener('click', startRecording);
+els.recordBtn.addEventListener('click', () => startRecording());
 els.pauseBtn.addEventListener('click', togglePause);
 els.stopBtn.addEventListener('click', stopRecording);
 els.newBtn.addEventListener('click', resetToIdle);
 
 els.downloadAudioBtn.addEventListener('click', () => {
   const l = state.lecture;
-  if (l?.audioBlob) download(l.audioBlob, `${slugify(l.title)}.${audioExtension(l.mimeType)}`);
+  if (!l) return;
+  const parts = audioPartsOf(l).filter((p) => p.blob?.size);
+  parts.forEach((part, i) => {
+    const suffix = parts.length > 1 ? `-part${i + 1}` : '';
+    // Stagger the downloads so the browser doesn't drop any.
+    setTimeout(() => download(part.blob, `${slugify(l.title)}${suffix}.${audioExtension(part.mimeType || l.mimeType)}`), i * 400);
+  });
 });
+els.player.addEventListener('ended', () => {
+  // Carry on into the next part of a continued lecture.
+  if (state.partIndex < state.playbackParts.length - 1) loadPart(state.partIndex + 1, 0, true);
+});
+els.continueBtn.addEventListener('click', () => startRecording({ resume: true }));
 els.copyBtn.addEventListener('click', () => state.lecture && copyText(transcriptText(state.lecture), els.copyBtn));
 els.downloadTxtBtn.addEventListener('click', () => {
   const l = state.lecture;
@@ -1146,30 +1569,66 @@ els.chatterToggle.addEventListener('click', () => {
   updateTranscriptMeta();
 });
 
-els.generateBtn.addEventListener('click', runNotes);
+els.generateBtn.addEventListener('click', () => queueNotes(state.lecture));
 els.copyNotesBtn.addEventListener('click', () => state.lecture?.notes && copyText(notesText(state.lecture), els.copyNotesBtn));
 els.downloadNotesBtn.addEventListener('click', () => {
   const l = state.lecture;
   if (l?.notes) download(new Blob([notesText(l)], { type: 'text/markdown' }), `${slugify(l.title)}-notes.md`);
 });
 
-els.saveKeyBtn.addEventListener('click', () => {
-  const key = els.apiKey.value.trim();
-  if (!key) return;
-  savePrefs({ apiKey: key });
-  els.apiKey.value = '';
-  els.apiKey.placeholder = 'Key saved ✓';
-  els.settings.open = false;
+const aiSettingsChanged = () => {
+  renderAISettings();
   renderNotes();
+};
+els.providerSelect.addEventListener('change', () => {
+  savePrefs({ provider: els.providerSelect.value });
+  aiSettingsChanged();
+  refreshModelSuggestions();
+});
+els.modelSelect.addEventListener('change', () => {
+  if (els.modelSelect.value === CUSTOM_MODEL) {
+    els.modelInput.hidden = false;
+    els.modelInput.value = '';
+    els.modelInput.focus();
+    return;
+  }
+  saveProviderPref('models', els.modelSelect.value);
+  aiSettingsChanged();
+});
+els.modelInput.addEventListener('change', () => {
+  const name = els.modelInput.value.trim();
+  if (!name) return;
+  saveProviderPref('models', name);
+  aiSettingsChanged();
+});
+els.modelInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') els.modelInput.blur(); // commits via the change event
+});
+els.baseUrlInput.addEventListener('change', () => {
+  savePrefs({ baseUrl: els.baseUrlInput.value.trim() });
+  aiSettingsChanged();
+  refreshModelSuggestions();
+});
+els.saveKeyBtn.addEventListener('click', () => {
+  const key = els.apiKey.value.replace(/\s+/g, ''); // keys never contain spaces or line breaks
+  if (!key) return;
+  saveProviderPref('keys', key);
+  aiSettingsChanged();
+  refreshModelSuggestions();
 });
 els.apiKey.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') els.saveKeyBtn.click();
 });
 els.clearKeyBtn.addEventListener('click', () => {
-  savePrefs({ apiKey: '' });
-  els.apiKey.value = '';
-  els.apiKey.placeholder = 'sk-ant-…';
-  renderNotes();
+  saveProviderPref('keys', '');
+  aiSettingsChanged();
+});
+
+els.importBtn.addEventListener('click', () => els.importInput.click());
+els.emptyImportBtn.addEventListener('click', () => els.importInput.click());
+els.importInput.addEventListener('change', () => {
+  importFiles(els.importInput.files);
+  els.importInput.value = ''; // allow re-importing the same file
 });
 els.autoNotes.addEventListener('change', () => savePrefs({ autoNotes: els.autoNotes.checked }));
 
@@ -1196,7 +1655,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 window.addEventListener('beforeunload', (e) => {
-  if (state.status === 'recording' || state.status === 'paused' || state.status === 'stopping' || state.generating) {
+  if (isLive() || state.generatingId || queuedIds.size) {
     e.preventDefault();
     e.returnValue = '';
   }
@@ -1220,7 +1679,13 @@ document.addEventListener('keydown', (e) => {
 async function init() {
   const prefs = loadPrefs();
   els.autoNotes.checked = prefs.autoNotes ?? true;
-  if (prefs.apiKey) els.apiKey.placeholder = 'Key saved ✓';
+  if (prefs.apiKey) {
+    // Move the single Claude key from earlier versions into the per-provider keys.
+    savePrefs({ keys: { anthropic: prefs.apiKey, ...(prefs.keys || {}) }, apiKey: undefined });
+  }
+  els.providerSelect.replaceChildren(...Object.entries(PROVIDERS).map(([id, p]) => new Option(p.label, id)));
+  renderAISettings();
+  refreshModelSuggestions();
 
   if (location.protocol !== 'file:' && !window.MediaRecorder) {
     els.banner.hidden = false;

@@ -17,6 +17,8 @@
     </div>
     <div class="topbar-actions">
       <button id="newBtn" class="btn btn-ghost" type="button" hidden>New lecture</button>
+      <button id="importBtn" class="btn btn-ghost" type="button" title="Summarize a transcript you already have (.txt, .srt, .vtt, .md)"><span>Import<span class="hide-sm"> transcript</span></span></button>
+      <input id="importInput" type="file" accept=".txt,.md,.srt,.vtt,.text,text/plain,text/vtt" multiple hidden />
       <a href="#library" class="btn btn-ghost">Library <span id="libraryCount" class="count">0</span></a>
     </div>
   </header>
@@ -72,10 +74,14 @@
           <button id="pauseBtn" class="btn btn-secondary" type="button" disabled>Pause</button>
           <button id="stopBtn" class="btn btn-secondary" type="button" disabled>Stop</button>
         </div>
+        <button id="continueBtn" class="btn btn-secondary btn-continue" type="button" hidden>
+          <span class="dot" aria-hidden="true"></span>Continue this lecture
+        </button>
 
         <p id="notice" class="notice" role="alert" hidden></p>
 
         <div id="playback" class="playback" hidden>
+          <div id="partTabs" class="part-tabs"></div>
           <audio id="player" controls preload="metadata"></audio>
           <div class="playback-actions">
             <button id="downloadAudioBtn" class="btn btn-secondary" type="button">Download audio</button>
@@ -101,6 +107,9 @@
           <div id="emptyState" class="empty">
             <p>Your transcript will appear here as the lecture is spoken.</p>
             <p class="muted">Press <strong>Start recording</strong> and allow microphone access.</p>
+            <p class="muted empty-import">Already have a transcript?
+              <button id="emptyImportBtn" class="link-btn" type="button">Import a file to summarize</button>
+              or drop it on this page.</p>
           </div>
           <div id="segments"></div>
           <p id="interim" class="interim"></p>
@@ -122,17 +131,32 @@
       </div>
 
       <details id="settings" class="settings">
-        <summary>Claude settings</summary>
+        <summary>AI settings <span id="providerSummary" class="muted"></span></summary>
         <div class="settings-body">
+          <div class="field-row">
+            <label class="field">
+              <span class="field-label">Provider</span>
+              <select id="providerSelect"></select>
+            </label>
+            <label class="field">
+              <span class="field-label">Model</span>
+              <select id="modelSelect"></select>
+              <input id="modelInput" type="text" autocomplete="off" spellcheck="false" aria-label="Model name" hidden />
+            </label>
+          </div>
+          <label id="baseUrlField" class="field" hidden>
+            <span class="field-label">API base URL</span>
+            <input id="baseUrlInput" type="text" autocomplete="off" spellcheck="false" placeholder="https://openrouter.ai/api/v1" />
+          </label>
           <label class="field">
-            <span class="field-label">Anthropic API key</span>
+            <span id="apiKeyLabel" class="field-label">API key</span>
             <span class="key-row">
-              <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" />
+              <input id="apiKey" type="password" autocomplete="off" spellcheck="false" />
               <button id="saveKeyBtn" class="btn btn-secondary" type="button">Save</button>
               <button id="clearKeyBtn" class="btn btn-ghost" type="button">Remove</button>
             </span>
           </label>
-          <p class="muted">Stored in this browser only and sent directly to api.anthropic.com. Create a key at console.anthropic.com.</p>
+          <p id="providerHelp" class="muted"></p>
           <label class="check">
             <input id="autoNotes" type="checkbox" checked />
             <span>Generate notes automatically when a recording stops</span>
@@ -150,5 +174,12 @@
       <p id="libraryEmpty" class="muted empty-library">No saved lectures yet.</p>
     </section>
   </main>
+
+  <div id="dropOverlay" class="drop-overlay" hidden>
+    <div class="drop-card">
+      <p><strong>Drop transcript files to summarize</strong></p>
+      <p class="muted">.txt, .srt, .vtt or .md</p>
+    </div>
+  </div>
 </body>
 </html>
