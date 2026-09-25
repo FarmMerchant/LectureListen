@@ -5,7 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>LectureListen</title>
   <meta name="description" content="Record lectures from your microphone, transcribe them live, and turn them into clean study notes." />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234f46e5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='2' width='6' height='12' rx='3'/%3E%3Cpath d='M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8'/%3E%3C/svg%3E" />
+  <meta name="theme-color" content="#070a14" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f4f6fc" media="(prefers-color-scheme: light)" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%238b8cff'/%3E%3Cstop offset='1' stop-color='%2338d6f5'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Cpath d='M9 18v-4M13 21V11M17 23V9M21 20v-8M25 17v-2' stroke='white' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" />
   <link rel="stylesheet" href="styles.css" />
   <script>
     // If app.js fails to load or start (for example a stale cached file after an
@@ -26,19 +31,24 @@
     })();
   </script>
   <script type="module" src="app.js"></script>
+  <script type="module" src="plexus.js"></script>
 </head>
-<body>
+<body data-status="idle">
+  <canvas id="plexus" class="plexus" aria-hidden="true"></canvas>
+
   <header class="topbar">
-    <div class="brand">
-      <svg class="brand-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/></svg>
-      <span>LectureListen</span>
-    </div>
-    <div class="topbar-actions">
-      <button id="newBtn" class="btn btn-ghost" type="button" hidden>New lecture</button>
-      <button id="importBtn" class="btn btn-ghost" type="button" title="Summarize a transcript you already have (.txt, .srt, .vtt, .md)"><span>Import<span class="hide-sm"> transcript</span></span></button>
+    <a class="brand" href="#" aria-label="LectureListen home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M5 13v-2M9 16V8M13 18V6M17 15V9M21 12.5v-1"/></svg>
+      </span>
+      <span class="brand-name">Lecture<span>Listen</span></span>
+    </a>
+    <nav class="topbar-actions" aria-label="Main">
+      <button id="newBtn" class="btn btn-ghost icon i-plus" type="button" hidden><span class="hide-sm">New lecture</span></button>
+      <button id="importBtn" class="btn btn-ghost icon i-upload" type="button" title="Summarize a transcript you already have (.txt, .srt, .vtt, .md)"><span>Import<span class="hide-sm"> transcript</span></span></button>
       <input id="importInput" type="file" accept=".txt,.md,.srt,.vtt,.text,text/plain,text/vtt" multiple hidden />
-      <a href="#library" class="btn btn-ghost">Library <span id="libraryCount" class="count">0</span></a>
-    </div>
+      <a href="#library" class="btn btn-ghost icon i-library"><span class="hide-sm">Library</span> <span id="libraryCount" class="count">0</span></a>
+    </nav>
   </header>
 
   <main class="container">
@@ -55,26 +65,9 @@
       <section class="card recorder" aria-labelledby="recorderHeading">
         <h2 id="recorderHeading" class="visually-hidden">Recorder</h2>
 
-        <label class="field">
-          <span class="field-label">Lecture title</span>
-          <input id="title" type="text" autocomplete="off" />
-        </label>
-
-        <div class="field-row">
-          <label class="field">
-            <span class="field-label">Microphone</span>
-            <select id="micSelect"><option value="">Default microphone</option></select>
-          </label>
-          <label class="field">
-            <span class="field-label">Language</span>
-            <select id="langSelect"></select>
-          </label>
-        </div>
-
-        <label class="field">
-          <span class="field-label">Transcription</span>
-          <select id="engineSelect"></select>
-          <span id="engineHint" class="field-hint" aria-live="polite"></span>
+        <label class="title-field">
+          <span class="visually-hidden">Lecture title</span>
+          <input id="title" class="title-input" type="text" autocomplete="off" spellcheck="false" />
         </label>
 
         <div class="meter">
@@ -89,22 +82,40 @@
           <button id="recordBtn" class="btn btn-record" type="button">
             <span class="dot" aria-hidden="true"></span><span class="label">Start recording</span>
           </button>
-          <button id="pauseBtn" class="btn btn-secondary" type="button" disabled>Pause</button>
-          <button id="stopBtn" class="btn btn-secondary" type="button" disabled>Stop</button>
+          <button id="pauseBtn" class="btn btn-control icon i-pause" type="button" disabled>Pause</button>
+          <button id="stopBtn" class="btn btn-control btn-stop icon i-stop" type="button" disabled>Stop</button>
         </div>
-        <button id="continueBtn" class="btn btn-secondary btn-continue" type="button" hidden>
-          <span class="dot" aria-hidden="true"></span>Continue this lecture
-        </button>
+        <button id="continueBtn" class="btn btn-secondary btn-continue icon i-plus" type="button" hidden>Continue this lecture</button>
 
         <p id="notice" class="notice" role="alert" hidden></p>
 
         <div id="playback" class="playback" hidden>
           <div id="partTabs" class="part-tabs"></div>
           <audio id="player" controls preload="metadata"></audio>
-          <div class="playback-actions">
-            <button id="downloadAudioBtn" class="btn btn-secondary" type="button">Download audio</button>
-          </div>
+          <button id="downloadAudioBtn" class="btn btn-ghost btn-sm icon i-download" type="button">Download audio</button>
         </div>
+
+        <details id="recSettings" class="disclosure">
+          <summary>
+            <span class="disclosure-title icon-inline i-sliders">Input settings</span>
+            <span id="recSettingsSummary" class="disclosure-summary"></span>
+          </summary>
+          <div class="disclosure-body">
+            <label class="field">
+              <span class="field-label">Microphone</span>
+              <select id="micSelect"><option value="">Default microphone</option></select>
+            </label>
+            <label class="field">
+              <span class="field-label">Language</span>
+              <select id="langSelect"></select>
+            </label>
+            <label class="field">
+              <span class="field-label">Transcription</span>
+              <select id="engineSelect"></select>
+              <span id="engineHint" class="field-hint" aria-live="polite"></span>
+            </label>
+          </div>
+        </details>
 
         <p class="hint">Sit near the speaker and keep this tab open. Your screen stays awake while recording.</p>
       </section>
@@ -116,14 +127,15 @@
             <p id="wordCount" class="muted">0 words</p>
           </div>
           <div class="card-actions">
-            <button id="chatterToggle" class="btn btn-ghost" type="button" hidden>Show removed</button>
-            <button id="copyBtn" class="btn btn-ghost" type="button" disabled>Copy</button>
-            <button id="downloadTxtBtn" class="btn btn-ghost" type="button" disabled>Download .txt</button>
+            <button id="chatterToggle" class="btn btn-ghost btn-sm icon i-eye" type="button" hidden>Show removed</button>
+            <button id="copyBtn" class="btn btn-ghost btn-sm icon i-copy" type="button" disabled>Copy</button>
+            <button id="downloadTxtBtn" class="btn btn-ghost btn-sm icon i-download" type="button" disabled>.txt</button>
           </div>
         </div>
         <div id="transcript" class="transcript" aria-live="polite">
           <div id="emptyState" class="empty">
-            <p>Your transcript will appear here as the lecture is spoken.</p>
+            <div class="empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4"/></svg></div>
+            <p class="empty-title">Your transcript will appear here as the lecture is spoken.</p>
             <p class="muted">Press <strong>Start recording</strong> and allow microphone access.</p>
             <p class="muted empty-import">Already have a transcript?
               <button id="emptyImportBtn" class="link-btn" type="button">Import a file to summarize</button>
@@ -142,15 +154,18 @@
           <p id="notesStatus" class="muted" aria-live="polite"></p>
         </div>
         <div class="card-actions">
-          <button id="generateBtn" class="btn btn-primary" type="button" disabled>Generate notes</button>
-          <button id="copyNotesBtn" class="btn btn-ghost" type="button" disabled>Copy</button>
-          <button id="downloadNotesBtn" class="btn btn-ghost" type="button" disabled>Download .md</button>
+          <button id="copyNotesBtn" class="btn btn-ghost btn-sm icon i-copy" type="button" disabled>Copy</button>
+          <button id="downloadNotesBtn" class="btn btn-ghost btn-sm icon i-download" type="button" disabled>.md</button>
+          <button id="generateBtn" class="btn btn-primary icon i-sparkle" type="button" disabled>Generate notes</button>
         </div>
       </div>
 
-      <details id="settings" class="settings">
-        <summary>AI settings <span id="providerSummary" class="muted"></span></summary>
-        <div class="settings-body">
+      <details id="settings" class="disclosure settings">
+        <summary>
+          <span class="disclosure-title icon-inline i-sparkle">AI settings</span>
+          <span id="providerSummary" class="disclosure-summary"></span>
+        </summary>
+        <div class="disclosure-body settings-body">
           <div class="field-row">
             <label class="field">
               <span class="field-label">Provider</span>
@@ -188,10 +203,10 @@
     <section id="library" class="library" aria-labelledby="libraryHeading">
       <div class="library-head">
         <div>
-          <h2 id="libraryHeading">Saved lectures</h2>
+          <h2 id="libraryHeading">Library</h2>
           <p class="muted">Recordings, transcripts and notes are saved in this browser on this device.</p>
         </div>
-        <button id="selectBtn" class="btn btn-ghost" type="button" hidden>Select to merge</button>
+        <button id="selectBtn" class="btn btn-ghost icon i-merge" type="button" hidden>Select to merge</button>
       </div>
       <div id="mergeBar" class="merge-bar" hidden>
         <p id="mergeCount" class="merge-count">Select two or more lectures to merge.</p>
@@ -199,15 +214,18 @@
           <input id="removeOriginals" type="checkbox" />
           <span>Delete the originals after merging</span>
         </label>
-        <button id="mergeBtn" class="btn btn-primary" type="button" disabled>Merge</button>
+        <button id="mergeBtn" class="btn btn-primary icon i-merge" type="button" disabled>Merge</button>
       </div>
       <ul id="libraryList" class="library-list"></ul>
       <p id="libraryEmpty" class="muted empty-library">No saved lectures yet.</p>
     </section>
+
+    <footer class="footer">LectureListen · recordings stay in your browser</footer>
   </main>
 
   <div id="dropOverlay" class="drop-overlay" hidden>
     <div class="drop-card">
+      <div class="empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15V3m0 0-4 4m4-4 4 4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></div>
       <p><strong>Drop transcript files to summarize</strong></p>
       <p class="muted">.txt, .srt, .vtt or .md</p>
     </div>

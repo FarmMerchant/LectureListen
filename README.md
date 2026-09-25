@@ -90,6 +90,7 @@ Each provider's key is stored separately in this browser's localStorage and sent
 | `whisper.js` | On-device transcription: model loading, resampling to 16 kHz, splitting at pauses |
 | `whisper-worker.js` | Web Worker that runs Whisper with Transformers.js |
 | `pcm-worklet.js` | AudioWorklet that streams raw microphone samples |
+| `plexus.js` | Animated network background. Frozen while recording, when the tab is hidden, or with "reduce motion" |
 | `server.js` | Zero-dependency Node server for hosting (Railway) and `npm start`; serves only the app's files |
 | `package.json` / `railway.json` | Start script and Railway deploy settings |
 | `serve.ps1` | Zero-dependency local server for Windows |

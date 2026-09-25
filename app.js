@@ -11,6 +11,7 @@ const els = {
   langSelect: $('langSelect'),
   engineSelect: $('engineSelect'),
   engineHint: $('engineHint'),
+  recSettingsSummary: $('recSettingsSummary'),
   viz: $('viz'),
   statusPill: $('statusPill'),
   timer: $('timer'),
@@ -253,6 +254,14 @@ async function populateMics() {
     ...devices.map((d, i) => new Option(d.label || `Microphone ${i + 1}`, d.deviceId)),
   );
   els.micSelect.value = devices.some((d) => d.deviceId === wanted) ? wanted : '';
+  updateRecSettingsSummary();
+}
+
+// One-line summary shown on the collapsed "Input settings" row.
+function updateRecSettingsSummary() {
+  const label = (select) => select.selectedOptions[0]?.textContent || '';
+  const engine = els.engineSelect.value === 'whisper' ? 'On-device Whisper' : els.engineSelect.value ? 'Browser speech' : '';
+  els.recSettingsSummary.textContent = [label(els.micSelect), label(els.langSelect), engine].filter(Boolean).join(' · ');
 }
 
 function populateLanguages() {
@@ -731,10 +740,18 @@ function drawLevels() {
   const count = Math.floor(w / (barW + gap));
   const levels = state.levels.slice(-count);
   if (state.levels.length > count * 2) state.levels = levels;
-  const mid = h / 2 + 8;
-  const maxH = h - 64;
+  // Bars sit between the status pill (top) and the timer (bottom).
+  const mid = h * 0.44;
+  const maxH = h - 100;
 
-  ctx.fillStyle = styles.getPropertyValue(state.status === 'paused' ? '--muted' : '--viz').trim();
+  if (state.status === 'paused') {
+    ctx.fillStyle = styles.getPropertyValue('--muted').trim();
+  } else {
+    const gradient = ctx.createLinearGradient(0, 0, w, 0);
+    gradient.addColorStop(0, styles.getPropertyValue('--viz-2').trim() || '#38d6f5');
+    gradient.addColorStop(1, styles.getPropertyValue('--viz').trim() || '#8b8cff');
+    ctx.fillStyle = gradient;
+  }
   const offset = count - levels.length;
   for (let i = 0; i < count; i++) {
     const level = levels[i - offset] ?? 0;
@@ -1095,7 +1112,7 @@ function renderAISettings({ keepCustomModel = false } = {}) {
   const warning = apiKey ? foreignKeyWarning(provider, apiKey) : '';
   els.providerHelp.textContent = `${warning ? `⚠ ${warning} ` : ''}${p.keyHelp} Keys are stored in this browser only and sent only to the provider.`;
   els.providerHelp.classList.toggle('warn', Boolean(warning));
-  els.providerSummary.textContent = aiReady() ? `· ${providerName(provider)} · ${model}` : '· not set up';
+  els.providerSummary.textContent = aiReady() ? `${providerName(provider)} · ${model}` : 'Not set up';
 }
 
 const CUSTOM_MODEL = '__custom__';
@@ -1674,6 +1691,9 @@ function updateUI() {
   els.micSelect.disabled = els.langSelect.disabled = els.engineSelect.disabled = live;
   els.statusPill.dataset.status = s;
   els.statusPill.textContent = STATUS_LABELS[s];
+  document.body.dataset.status = s; // drives which controls show, and pauses the background animation
+  els.pauseBtn.classList.toggle('is-paused', s === 'paused');
+  updateRecSettingsSummary();
   els.newBtn.hidden = s !== 'stopped';
   document.title = s === 'recording' ? '● Recording – LectureListen' : 'LectureListen';
   updateNotesControls();
@@ -1787,6 +1807,7 @@ els.title.addEventListener('input', () => {
 
 els.micSelect.addEventListener('change', () => savePrefs({ micId: els.micSelect.value }));
 els.langSelect.addEventListener('change', () => savePrefs({ lang: els.langSelect.value }));
+for (const select of [els.micSelect, els.langSelect, els.engineSelect]) select.addEventListener('change', updateRecSettingsSummary);
 els.engineSelect.addEventListener('change', () => {
   savePrefs({ engine: els.engineSelect.value });
   updateEngineHint();
