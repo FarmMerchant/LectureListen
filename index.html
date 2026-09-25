@@ -7,6 +7,24 @@
   <meta name="description" content="Record lectures from your microphone, transcribe them live, and turn them into clean study notes." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234f46e5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='2' width='6' height='12' rx='3'/%3E%3Cpath d='M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="styles.css" />
+  <script>
+    // If app.js fails to load or start (for example a stale cached file after an
+    // update), say so on the page instead of leaving empty controls.
+    (() => {
+      const show = (message) => {
+        const b = document.getElementById('banner');
+        if (!b || window.lectureListenReady) return;
+        b.hidden = false;
+        b.textContent = `LectureListen couldn’t start: ${message}. Reload with Ctrl+Shift+R (Cmd+Shift+R on Mac). If it still fails, report this message.`;
+      };
+      window.addEventListener('error', (e) => show(e.message || 'a script failed to load'), true);
+      window.addEventListener('load', () => setTimeout(() => {
+        if (window.lectureListenReady) return;
+        // Module link errors aren't reported to window.onerror; importing again surfaces the reason.
+        import('./app.js').then(() => show('the app didn’t finish loading'), (err) => show(err.message));
+      }, 4000));
+    })();
+  </script>
   <script type="module" src="app.js"></script>
 </head>
 <body>

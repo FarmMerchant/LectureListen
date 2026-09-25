@@ -1,7 +1,7 @@
 // Minimal static server for hosting LectureListen (Railway, Render, a VPS, or
 // `npm start` locally). No dependencies. Serves only the app's own files.
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -56,14 +56,18 @@ const server = createServer(async (req, res) => {
   }
 
   try {
+    const info = await stat(file);
+    const etag = `W/"${info.size.toString(16)}-${Math.floor(info.mtimeMs).toString(16)}"`;
+    // Every file is revalidated on each load (a cheap 304 when unchanged). The
+    // modules import each other, so a browser mixing a cached file from an older
+    // deploy with newer ones would fail to start.
+    const headers = { 'Cache-Control': 'no-cache', ETag: etag, ...HEADERS };
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, headers).end();
+      return;
+    }
     const body = await readFile(file);
-    res.writeHead(200, {
-      'Content-Type': type,
-      'Content-Length': body.length,
-      // HTML is always revalidated so a redeploy shows up immediately.
-      'Cache-Control': type.startsWith('text/html') ? 'no-cache' : 'public, max-age=300',
-      ...HEADERS,
-    });
+    res.writeHead(200, { 'Content-Type': type, 'Content-Length': body.length, ...headers });
     res.end(req.method === 'HEAD' ? undefined : body);
   } catch {
     res.writeHead(404, { 'Content-Type': 'text/plain', ...HEADERS }).end('Not found');

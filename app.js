@@ -1697,6 +1697,7 @@ async function init() {
   populateLanguages();
   populateMics();
   resetToIdle();
+  window.lectureListenReady = true; // hides index.html's "couldn't start" fallback
   await recoverInterrupted();
   renderLibrary();
 }
