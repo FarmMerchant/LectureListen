@@ -1,4 +1,4 @@
-# LectureListen
+# Mivimoose Listen
 
 Record a lecture from your microphone and transcribe it live, or import a transcript you already have. Then have an AI (Claude, Gemini, OpenAI, or any OpenAI-compatible service) turn the transcript into organized study notes, with background chatter from students removed.
 

@@ -1,4 +1,4 @@
-# Serves LectureListen at http://localhost:8000 (no installs needed).
+# Serves Mivimoose Listen at http://localhost:8000 (no installs needed).
 # Usage:  powershell -ExecutionPolicy Bypass -File serve.ps1 [-Port 8000]
 param([int]$Port = 8000)
 
@@ -17,7 +17,7 @@ $types = @{
 $listener = [System.Net.HttpListener]::new()
 $listener.Prefixes.Add("http://localhost:$Port/")
 $listener.Start()
-Write-Host "LectureListen running at http://localhost:$Port/  (Ctrl+C to stop)"
+Write-Host "Mivimoose Listen running at http://localhost:$Port/  (Ctrl+C to stop)"
 
 try {
   while ($listener.IsListening) {

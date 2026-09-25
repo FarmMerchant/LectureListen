@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>LectureListen</title>
+  <title>Mivimoose Listen</title>
   <meta name="description" content="Record lectures from your microphone, transcribe them live, and turn them into clean study notes." />
   <meta name="theme-color" content="#070a14" media="(prefers-color-scheme: dark)" />
   <meta name="theme-color" content="#f4f6fc" media="(prefers-color-scheme: light)" />
@@ -20,7 +20,7 @@
         const b = document.getElementById('banner');
         if (!b || window.lectureListenReady) return;
         b.hidden = false;
-        b.textContent = `LectureListen couldn’t start: ${message}. Reload with Ctrl+Shift+R (Cmd+Shift+R on Mac). If it still fails, report this message.`;
+        b.textContent = `Mivimoose Listen couldn’t start: ${message}. Reload with Ctrl+Shift+R (Cmd+Shift+R on Mac). If it still fails, report this message.`;
       };
       window.addEventListener('error', (e) => show(e.message || 'a script failed to load'), true);
       window.addEventListener('load', () => setTimeout(() => {
@@ -37,17 +37,17 @@
   <canvas id="plexus" class="plexus" aria-hidden="true"></canvas>
 
   <header class="topbar">
-    <a class="brand" href="#" aria-label="LectureListen home">
+    <a class="brand" href="#" aria-label="Mivimoose Listen home">
       <span class="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 24 24"><path d="M5 13v-2M9 16V8M13 18V6M17 15V9M21 12.5v-1"/></svg>
       </span>
-      <span class="brand-name">Lecture<span>Listen</span></span>
+      <span class="brand-name">Mivimoose <span>Listen</span></span>
     </a>
     <nav class="topbar-actions" aria-label="Main">
-      <button id="newBtn" class="btn btn-ghost icon i-plus" type="button" hidden><span class="hide-sm">New lecture</span></button>
-      <button id="importBtn" class="btn btn-ghost icon i-upload" type="button" title="Summarize a transcript you already have (.txt, .srt, .vtt, .md)"><span>Import<span class="hide-sm"> transcript</span></span></button>
+      <button id="newBtn" class="btn btn-ghost icon i-plus" type="button" aria-label="New lecture" hidden><span class="hide-sm">New lecture</span></button>
+      <button id="importBtn" class="btn btn-ghost icon i-upload" type="button" aria-label="Import transcript" title="Summarize a transcript you already have (.txt, .srt, .vtt, .md)"><span class="hide-xs">Import<span class="hide-sm"> transcript</span></span></button>
       <input id="importInput" type="file" accept=".txt,.md,.srt,.vtt,.text,text/plain,text/vtt" multiple hidden />
-      <a href="#library" class="btn btn-ghost icon i-library"><span class="hide-sm">Library</span> <span id="libraryCount" class="count">0</span></a>
+      <a href="#library" class="btn btn-ghost icon i-library" aria-label="Library"><span class="hide-sm">Library</span> <span id="libraryCount" class="count">0</span></a>
     </nav>
   </header>
 
@@ -57,7 +57,7 @@
       if (location.protocol === 'file:') {
         const b = document.getElementById('banner');
         b.hidden = false;
-        b.textContent = 'LectureListen must be served from a local web server, not opened as a file. Run serve.ps1 in this folder (or any static server) and open http://localhost:8000.';
+        b.textContent = 'Mivimoose Listen must be served from a local web server, not opened as a file. Run serve.ps1 in this folder (or any static server) and open http://localhost:8000.';
       }
     </script>
 
@@ -220,7 +220,7 @@
       <p id="libraryEmpty" class="muted empty-library">No saved lectures yet.</p>
     </section>
 
-    <footer class="footer">LectureListen · recordings stay in your browser</footer>
+    <footer class="footer">Mivimoose Listen · recordings stay in your browser</footer>
   </main>
 
   <div id="dropOverlay" class="drop-overlay" hidden>

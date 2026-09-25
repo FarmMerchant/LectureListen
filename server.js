@@ -1,4 +1,4 @@
-// Minimal static server for hosting LectureListen (Railway, Render, a VPS, or
+// Minimal static server for hosting Mivimoose Listen (Railway, Render, a VPS, or
 // `npm start` locally). No dependencies. Serves only the app's own files.
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
@@ -74,7 +74,7 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => console.log(`LectureListen running on http://localhost:${PORT}`));
+server.listen(PORT, () => console.log(`Mivimoose Listen running on http://localhost:${PORT}`));
 
 // Railway sends SIGTERM on redeploy; finish in-flight requests, then exit.
 process.on('SIGTERM', () => server.close(() => process.exit(0)));

@@ -1695,7 +1695,7 @@ function updateUI() {
   els.pauseBtn.classList.toggle('is-paused', s === 'paused');
   updateRecSettingsSummary();
   els.newBtn.hidden = s !== 'stopped';
-  document.title = s === 'recording' ? '● Recording – LectureListen' : 'LectureListen';
+  document.title = s === 'recording' ? '● Recording – Mivimoose Listen' : 'Mivimoose Listen';
   updateNotesControls();
 }
 

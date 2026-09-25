@@ -1,5 +1,5 @@
 {
-  "name": "lecturelisten",
+  "name": "mivimoose-listen",
   "version": "1.0.0",
   "private": true,
   "description": "Record lectures, transcribe them, and turn them into study notes.",

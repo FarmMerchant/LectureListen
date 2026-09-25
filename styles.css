@@ -146,7 +146,7 @@ h2 { font-size: 1.05rem; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
   box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 .brand-mark svg { width: 20px; height: 20px; fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; }
-.brand-name { font-weight: 700; font-size: 1.06rem; letter-spacing: -0.02em; }
+.brand-name { font-weight: 700; font-size: 1.06rem; letter-spacing: -0.02em; white-space: nowrap; }
 .brand-name span {
   background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent;
 }
@@ -605,6 +605,15 @@ body:is([data-status="recording"], [data-status="paused"], [data-status="stoppin
   .key-row { flex-wrap: wrap; }
   .key-row input { flex-basis: 100%; }
   .library-head { flex-direction: column; align-items: flex-start; }
+}
+
+@media (max-width: 420px) {
+  .hide-xs { display: none; }
+  .brand { gap: 8px; }
+  .brand-mark { width: 30px; height: 30px; }
+  .brand-name { font-size: 1rem; }
+  .topbar { padding: 10px 10px 10px 12px; }
+  .topbar-actions .btn { padding: 8px 7px; gap: 6px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

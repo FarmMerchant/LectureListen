@@ -1,6 +1,6 @@
 // Parses transcript files into timestamped segments so they can be summarized
 // like a recording. Handles SRT/VTT subtitles, "[mm:ss] text" lines (including
-// LectureListen's own .txt export), "Speaker  0:03" blocks (Otter-style) and
+// Mivimoose Listen's own .txt export), "Speaker  0:03" blocks (Otter-style) and
 // plain text.
 
 export const IMPORT_EXTENSIONS = ['.txt', '.md', '.srt', '.vtt', '.text', '.log'];
